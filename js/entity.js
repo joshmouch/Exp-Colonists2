@@ -42,10 +42,43 @@ class Entity {
             const dx = this.targetPosition.x - this.x;
             const dy = this.targetPosition.y - this.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
-            
-            if (dist > 5) { // Only move if we're not already close enough
-                const moveX = (dx / dist) * this.speed * deltaTime;
-                const moveY = (dy / dist) * this.speed * deltaTime;
+
+            if (dist > GAME_CONSTANTS.MOVEMENT.MIN_DISTANCE) {
+                // Check for collision with other entities
+                let collisionX = 0;
+                let collisionY = 0;
+
+                // Simple collision avoidance
+                for (const entity of gameState.entities) {
+                    if (entity.id !== this.id && entity.alive) {
+                        const entityDist = distance(this.x, this.y, entity.x, entity.y);
+                        if (entityDist < GAME_CONSTANTS.MOVEMENT.COLLISION_RADIUS) {
+                            // Calculate repulsion vector
+                            const repulsionFactor = 1 - (entityDist / GAME_CONSTANTS.MOVEMENT.COLLISION_RADIUS);
+                            const repulsionX = (this.x - entity.x) * repulsionFactor;
+                            const repulsionY = (this.y - entity.y) * repulsionFactor;
+
+                            collisionX += repulsionX;
+                            collisionY += repulsionY;
+                        }
+                    }
+                }
+
+                // Calculate movement with collision avoidance
+                let moveX = (dx / dist) * this.speed * deltaTime;
+                let moveY = (dy / dist) * this.speed * deltaTime;
+
+                // Add collision avoidance
+                moveX += collisionX * deltaTime * this.speed * 0.5;
+                moveY += collisionY * deltaTime * this.speed * 0.5;
+
+                // Normalize if needed
+                const moveLength = Math.sqrt(moveX * moveX + moveY * moveY);
+                if (moveLength > 0) {
+                    moveX = (moveX / moveLength) * Math.min(moveLength, this.speed * deltaTime);
+                    moveY = (moveY / moveLength) * Math.min(moveLength, this.speed * deltaTime);
+                }
+
                 this.x += moveX;
                 this.y += moveY;
             } else {
@@ -58,15 +91,20 @@ class Entity {
             const target = gameState.getEntityById(this.targetId);
             if (target && target.alive && target.side !== this.side) {
                 const dist = distance(this.x, this.y, target.x, target.y);
-                
+
                 // If target is in range and attack cooldown is over
-                if (dist <= this.attackRange && 
+                if (dist <= this.attackRange &&
                     gameState.currentTime - this.lastAttackTime >= 1000 / this.attackSpeed) {
                     this.attack(target, gameState);
                     this.lastAttackTime = gameState.currentTime;
                 } else if (dist > this.attackRange && this.speed > 0) {
-                    // Move towards target if out of range
-                    this.targetPosition = { x: target.x, y: target.y };
+                    // Move towards target if out of range, but stop at attack range
+                    const targetDist = this.attackRange * GAME_CONSTANTS.MOVEMENT.ATTACK_STOP_DISTANCE;
+                    const angle = getAngle(this.x, this.y, target.x, target.y);
+                    const targetX = target.x - Math.cos(angle) * targetDist;
+                    const targetY = target.y - Math.sin(angle) * targetDist;
+
+                    this.targetPosition = { x: targetX, y: targetY };
                 }
             } else {
                 // Target is dead or invalid
@@ -82,25 +120,70 @@ class Entity {
 
     attack(target, gameState) {
         if (!target || !target.alive) return;
-        
-        // Calculate damage with defense reduction
-        const damage = Math.max(1, this.attackDamage - target.defense);
-        target.takeDamage(damage, this, gameState);
-        
-        // Trigger attack effects or animations here
+
+        // Get projectile type based on unit type
+        const projectileType = this.unitType || this.buildingType || 'warrior';
+
+        // Get projectile configuration
+        const projectileConfig = GAME_CONSTANTS.COMBAT.PROJECTILE_TYPES[projectileType] ||
+                                GAME_CONSTANTS.COMBAT.PROJECTILE_TYPES.warrior;
+
+        // Calculate damage with defense reduction and multiplier
+        const baseDamage = Math.max(1, this.attackDamage - target.defense);
+        const damage = Math.round(baseDamage * (projectileConfig.damage_multiplier || 1.0));
+
+        // Calculate initial projectile position (slightly offset from center)
+        const angle = getAngle(this.x, this.y, target.x, target.y);
+        const offsetDistance = this.radius * 0.8;
+        const startX = this.x + Math.cos(angle) * offsetDistance;
+        const startY = this.y + Math.sin(angle) * offsetDistance;
+
+        // Add attack effect (visual feedback for attack initiation)
         gameState.addEffect({
             type: 'attack',
             sourceX: this.x,
             sourceY: this.y,
+            targetX: startX,
+            targetY: startY,
+            duration: GAME_CONSTANTS.COMBAT.EFFECT_DURATION.ATTACK
+        });
+
+        // Calculate projectile lifetime
+        const lifetime = projectileConfig.lifetime || GAME_CONSTANTS.PHYSICS.PROJECTILE_LIFETIME;
+
+        // For healing projectiles (healer units)
+        const isHealing = projectileType === 'healer' && target.side === this.side;
+        const healAmount = isHealing ?
+            Math.round(this.attackDamage * (projectileConfig.healing_multiplier || 1.0)) : 0;
+
+        // Create a real physics-based projectile
+        gameState.addProjectile({
+            sourceX: startX,
+            sourceY: startY,
             targetX: target.x,
             targetY: target.y,
-            duration: 0.2
+            targetId: target.id,
+            sourceId: this.id,
+            type: projectileType,
+            damage: isHealing ? 0 : damage,
+            healing: healAmount,
+            speed: projectileConfig.speed,
+            size: projectileConfig.size,
+            color: projectileConfig.color,
+            trail: projectileConfig.trail,
+            trailLength: projectileConfig.trail_length,
+            gravityAffected: projectileConfig.gravity_affected,
+            gravityFactor: projectileConfig.gravity_factor || 1.0,
+            penetration: projectileConfig.penetration || 0,
+            lifetime: lifetime,
+            side: this.side,
+            creationTime: gameState.currentTime
         });
     }
 
     takeDamage(amount, attacker, gameState) {
         this.health -= amount;
-        
+
         // Trigger damage effects or animations here
         gameState.addEffect({
             type: 'damage',
@@ -109,12 +192,12 @@ class Entity {
             amount: amount,
             duration: 0.5
         });
-        
+
         if (this.health <= 0) {
             this.health = 0;
             this.die(gameState);
         }
-        
+
         // If not on autopilot and we're attacked, target the attacker
         if (!this.autopilot && !this.targetId && attacker) {
             this.setTarget(attacker.id);
@@ -125,7 +208,7 @@ class Entity {
         this.alive = false;
         this.targetId = null;
         this.targetPosition = null;
-        
+
         // Trigger death effects or animations here
         gameState.addEffect({
             type: 'death',
@@ -133,7 +216,7 @@ class Entity {
             y: this.y,
             duration: 1.0
         });
-        
+
         // Schedule removal from game state
         setTimeout(() => {
             gameState.removeEntity(this.id);
@@ -153,7 +236,7 @@ class Entity {
     findNearestEnemy(gameState) {
         let nearest = null;
         let minDist = Infinity;
-        
+
         for (const entity of gameState.entities) {
             if (entity.side !== this.side && entity.alive) {
                 const dist = distance(this.x, this.y, entity.x, entity.y);
@@ -163,7 +246,7 @@ class Entity {
                 }
             }
         }
-        
+
         return nearest;
     }
 
@@ -191,25 +274,25 @@ class Entity {
             'Health': `${Math.floor(this.health)}/${this.maxHealth}`,
             'Side': this.side === 0 ? 'Green' : 'Red'
         };
-        
+
         if (this.maxMana > 0) {
             baseStats['Mana'] = `${Math.floor(this.mana)}/${this.maxMana}`;
         }
-        
+
         if (this.attackDamage > 0) {
             baseStats['Attack'] = this.attackDamage;
             baseStats['Range'] = this.attackRange;
             baseStats['Attack Speed'] = this.attackSpeed.toFixed(1);
         }
-        
+
         if (this.defense > 0) {
             baseStats['Defense'] = this.defense;
         }
-        
+
         if (this.speed > 0) {
             baseStats['Speed'] = this.speed;
         }
-        
+
         return { ...baseStats, ...this.stats };
     }
 
@@ -223,7 +306,7 @@ class Entity {
                 state: this.autopilot
             }
         ];
-        
+
         return [...baseCommands, ...this.commands];
     }
 
@@ -233,7 +316,7 @@ class Entity {
         ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
         ctx.fillStyle = this.color;
         ctx.fill();
-        
+
         // Draw selection indicator if selected
         if (this.selected) {
             ctx.beginPath();
@@ -242,17 +325,17 @@ class Entity {
             ctx.lineWidth = 2;
             ctx.stroke();
         }
-        
+
         // Draw health bar
         const healthBarWidth = this.radius * 2;
         const healthBarHeight = 5;
         const healthBarX = this.x - this.radius;
         const healthBarY = this.y + this.radius + 5;
-        
+
         // Background
         ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         ctx.fillRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
-        
+
         // Health fill
         const healthPercentage = this.health / this.maxHealth;
         ctx.fillStyle = healthPercentage > 0.5 ? '#4CAF50' : healthPercentage > 0.25 ? '#FFC107' : '#F44336';
