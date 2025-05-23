@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto-Battler Game</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+        <div id="selection-panel" class="panel hidden">
+            <div class="panel-header">
+                <h3 id="selection-name">Selection</h3>
+                <button id="close-selection">×</button>
+            </div>
+            <div id="selection-stats"></div>
+            <div id="selection-commands"></div>
+            <div id="production-options" class="hidden"></div>
+        </div>
+        <div id="menu-button">☰</div>
+        <div id="menu-panel" class="panel hidden">
+            <div class="panel-header">
+                <h3>Game Menu</h3>
+                <button id="close-menu">×</button>
+            </div>
+            <button id="reset-game">Reset Game</button>
+            <div id="game-speed">
+                <label for="speed-slider">Game Speed:</label>
+                <input type="range" id="speed-slider" min="0.5" max="2" step="0.1" value="1">
+                <span id="speed-value">1x</span>
+            </div>
+        </div>
+    </div>
+    
+    <script src="js/utils.js"></script>
+    <script src="js/entity.js"></script>
+    <script src="js/unit.js"></script>
+    <script src="js/building.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
